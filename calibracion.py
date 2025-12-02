@@ -1,4 +1,3 @@
-import cv2
 from typing import List
 import numpy as np
 import cv2
@@ -46,11 +45,10 @@ imgs_draw = []
 for i in range(len(imgs)):
     img_draw = cv2.drawChessboardCorners(imgs[i], (7,9),  corners[i][1], corners[i][0])
     imgs_draw.append(img_draw)
-print(len(imgs))
 
 
 
-chessboard_points = get_chessboard_points((7, 9), 30, 30)
+chessboard_points = get_chessboard_points((7, 9), 20, 20)
 objpoints = []
 for _ in range(len(imgs)):
     objpoints.append(chessboard_points)
