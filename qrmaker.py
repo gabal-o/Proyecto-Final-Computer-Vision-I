@@ -1,4 +1,4 @@
 import qrcode
 
-qr = qrcode.make("D")
-qr.save("qr_D.png")
+qr = qrcode.make("Reset Contraseña")
+qr.save("qr_Reset.png")
