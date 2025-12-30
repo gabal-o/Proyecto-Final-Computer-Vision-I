@@ -79,3 +79,5 @@ def desbloquear():
     cv2.destroyAllWindows()
 
 
+
+
