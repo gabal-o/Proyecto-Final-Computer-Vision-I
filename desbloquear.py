@@ -28,7 +28,7 @@ def actualizar_buffer(token):
     print("Secuencia actual:", buffer)
 
     if buffer == SECUENCIA_CORRECTA:
-        print("Desbloqueado")
+        print("\n  ¡Desbloqueado!  ")
         buffer = []
         return True
     if len(buffer) > 3:
@@ -46,33 +46,37 @@ def registrar_token(token):
         return token
     
     return None  # QR aún visible → ignorar
+
 ########################## PROGRAMA PRINCIPAL ###########################
-cap = cv2.VideoCapture(0)
-detector = cv2.QRCodeDetector()
+def desbloquear():
+    global ultimo_token, SECUENCIA_CORRECTA, buffer
+    SECUENCIA_CORRECTA = ["A", "B", "C", "D"]
+    buffer = []
 
-sistema_desbloqueado = False
-ultimo_token=None
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    cap = cv2.VideoCapture(0)
+ 
+    ultimo_token=None
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-    lectura = detectar_qr(frame)
-    token = registrar_token(lectura)
-    if lectura is not None:
-        cv2.putText(frame, f"QR detectado: {lectura}", (20,40),
-            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-    if token is not None:
-        if actualizar_buffer(token):
-            sistema_desbloqueado = True
-            break  # → saltamos a la etapa del tracker
-    cv2.imshow("Sistema de seguridad - QR", frame)
+        lectura = detectar_qr(frame)
+        token = registrar_token(lectura)
+        if lectura is not None:
+            cv2.putText(frame, f"QR detectado: {lectura}", (20,40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+        if token is not None:
+            if actualizar_buffer(token):
+                break  # → saltamos a la etapa del tracker
+        cv2.imshow("Sistema de seguridad - QR", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:  # ESC
-        break
+        if cv2.waitKey(1) & 0xFF == 27:  # ESC
+            break
 
-if sistema_desbloqueado:
-    print("FUNCIONA")  # aquí arranca el tracker
+
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 cap.release()
