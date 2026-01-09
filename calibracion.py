@@ -1,9 +1,7 @@
 from typing import List
 import numpy as np
-import cv2
-import copy  
+import cv2 
 import glob
-import os
 
 def show_image(name,img):
     cv2.imshow("drawchessboard"+name, img)
@@ -32,32 +30,19 @@ def calibracion():
     imgs_path = [item for item in glob.glob("ImagenesCalibracion/*.jpg")]
     imgs = load_images(imgs_path)
     corners = [cv2.findChessboardCorners(img, (7,9)) for img in imgs]
-
-    corners_copy = copy.deepcopy(corners)
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)
-
-    imgs_gray = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in imgs]
-
-    corners_refined = [cv2.cornerSubPix(i, cor[1], (7, 9), (-1, -1), criteria) if cor[0] else [] for i, cor in zip(imgs_gray, corners_copy)]
-
-    imgs_copy = copy.deepcopy(imgs)
-
     imgs_draw = []
     for i in range(len(imgs)):
         img_draw = cv2.drawChessboardCorners(imgs[i], (7,9),  corners[i][1], corners[i][0])
         imgs_draw.append(img_draw)
-
-
 
     chessboard_points = get_chessboard_points((7, 9), 20, 20)
     objpoints = []
     for _ in range(len(imgs)):
         objpoints.append(chessboard_points)
     np.asarray(objpoints) 
-
     valid_corners = [cor[1] for cor in corners if cor[0]]
     valid_corners = np.asarray(valid_corners, dtype=np.float32)
-    # TODO
     cameraMat = np.zeros((3,3))
     distcoef = np.zeros((1,4))
     rms, intrinsics, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(np.asarray(objpoints),valid_corners,imgs[0].shape[:2],cameraMat,distcoef,criteria=criteria)
@@ -69,5 +54,5 @@ def calibracion():
     print("Distortion coefficients:\n", dist_coeffs)
     print("Root mean squared reprojection error:\n", rms)
 
-
-calibracion()
+if __name__ == "__main__":
+    calibracion()

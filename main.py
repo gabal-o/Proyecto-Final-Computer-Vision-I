@@ -1,14 +1,15 @@
 from calibracion import calibracion
 from desbloquear import desbloquear
-from tracker import tracker
+from trackerfinal import tracker
 
 # SOLO ES NECESARIO EJECUTAR LA CALIBRACIÓN UNA VEZ AL PRINCIPIO
 # Puedes descomentar este código o ejecutar calibracion.py
-"""print("\n--------------------------")
+"""
+print("\n--------------------------")
 print("CALIBRACIÓN:")
 print("--------------------------")
-calibracion()"""
-
+calibracion()
+"""
 print("\n--------------------------")
 print("DESBLOQUEAR CONTRASEÑA:")
 print("--------------------------")

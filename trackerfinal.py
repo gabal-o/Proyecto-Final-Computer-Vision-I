@@ -3,9 +3,7 @@ import numpy as np
 from collections import deque, Counter
 import time
 
-# -----------------------------
-# Helpers
-# -----------------------------
+
 def majority_vote(history, min_votes=8):
     """Return the most common label if it appears at least min_votes times; else 'NADA'."""
     if not history:
@@ -23,26 +21,27 @@ def winner(j1, j2):
         return 1
     return 2
 
-def preprocess_diff(roi_bgr, bg_bgr, kernel):
+def preprocess_diff_adaptive_bg(roi_bgr, bg_float, kernel,
+                               diff_thresh=25,
+                               blur_ksize=(5, 5)):
     """
-    Background subtraction pipeline:
-    absdiff -> gray -> blur -> threshold -> morphology
-    Returns a clean-ish binary mask.
+    Adaptive background subtraction pipeline:
+    absdiff(bg, roi) -> gray -> blur -> FIXED threshold -> morphology
+    Returns: mask (uint8), gray_diff (uint8)
     """
-    diff = cv2.absdiff(bg_bgr, roi_bgr)
+    bg_u8 = cv2.convertScaleAbs(bg_float)
+    diff = cv2.absdiff(bg_u8, roi_bgr)
     gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, blur_ksize, 0)
 
-    # Un blur más pequeño suele ir más rápido; si te mete ruido, sube a (7,7)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    # Umbral
+    _, mask = cv2.threshold(gray, diff_thresh, 255, cv2.THRESH_BINARY)
 
-    # Otsu threshold (robusto con background limpio)
-    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Morphology (optimizada: menos iteraciones)
+    # Morphology
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-    return mask
+    return mask, gray
 
 def best_contour(mask, min_area=7000):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -76,15 +75,10 @@ def best_contour(mask, min_area=7000):
     return best
 
 def count_defects_and_hull(contour):
-    """
-    Count convexity defects (valleys between fingers) with stricter filters to reduce noise.
-    Returns (n_defects, hull_points).
-    """
     area = cv2.contourArea(contour)
     if area < 7000:
         return 0, None
 
-    # Un epsilon algo mayor reduce puntos => más FPS
     eps = 0.005 * cv2.arcLength(contour, True)
     approx = cv2.approxPolyDP(contour, eps, True)
 
@@ -117,7 +111,6 @@ def count_defects_and_hull(contour):
         cosang = np.clip(cosang, -1.0, 1.0)
         angle = np.degrees(np.arccos(cosang))
 
-        # Filtro estricto para evitar defects falsos
         if angle <= 80 and depth > 18:
             n += 1
 
@@ -137,7 +130,6 @@ def classify(defects, area):
 # -----------------------------
 # Main
 # -----------------------------
-
 def tracker():
     cv2.setUseOptimized(True)
 
@@ -145,21 +137,24 @@ def tracker():
     if not cap.isOpened():
         raise RuntimeError("Could not open camera")
 
-    # Baja resolución para más FPS (ajusta si quieres más calidad)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    # Kernel precalculado (evita recrearlo cada frame)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
 
-    # Two ROIs (tune to your camera)
+    # Two ROIs
     ROI_W, ROI_H = 260, 260
     ROI1_X, ROI1_Y = 60, 80
     ROI2_X, ROI2_Y = 360, 80
 
-    # Background snapshots (per ROI)
+    # Adaptive background models (float32)
     bg1 = None
     bg2 = None
+
+    # Adaptation controls
+    alpha_bg = 0.01       # velocidad de adaptación del fondo 
+    diff_thresh = 15        # umbral fijo de diferencia 
+    update_white_ratio = 0.03  # si la máscara tiene <3% blanco, asumimos "sin mano" y actualizamos fondo
 
     # Game state
     score1, score2 = 0, 0
@@ -169,7 +164,6 @@ def tracker():
     last_round_text = ""
     show_round_until = 0.0
 
-    # Stabilization (un poco más ligera)
     hist_len = 15
     min_votes = 8
     h1 = deque(maxlen=hist_len)
@@ -177,17 +171,15 @@ def tracker():
 
     VALID = {"PIEDRA", "PAPEL", "TIJERA"}
 
-    # FPS (suavizado)
     prev_time = time.time()
     fps_ema = 0.0
-    alpha = 0.1  # 0.05 más suave, 0.2 más reactivo
+    alpha = 0.1
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # FPS smoothing (EMA)
         curr_time = time.time()
         dt = curr_time - prev_time
         prev_time = curr_time
@@ -197,21 +189,18 @@ def tracker():
         frame = cv2.flip(frame, 1)
         H, W = frame.shape[:2]
 
-        # Extract ROIs
         roi1 = frame[ROI1_Y:ROI1_Y + ROI_H, ROI1_X:ROI1_X + ROI_W]
-        roi2 = frame[ROI2_Y:ROI2_Y + ROI_H, ROI2_X:ROI2_X + ROI_W]
+        roi2 = frame[ROI2_Y:ROI2_Y + ROI_H, ROI2_X:ROI2_Y + ROI_H,] if False else frame[ROI2_Y:ROI2_Y + ROI_H, ROI2_X:ROI2_X + ROI_W]
 
-        # Draw ROIs
         cv2.rectangle(frame, (ROI1_X, ROI1_Y), (ROI1_X + ROI_W, ROI1_Y + ROI_H), (0, 255, 0), 2)
         cv2.rectangle(frame, (ROI2_X, ROI2_Y), (ROI2_X + ROI_W, ROI2_Y + ROI_H), (0, 255, 0), 2)
 
-        # Show FPS (suavizado)
         cv2.putText(frame, f"FPS: {fps_ema:.1f}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-        # If no background captured yet, just instruct the user
+        # Inicialización del background con B
         if bg1 is None or bg2 is None:
-            cv2.putText(frame, "Press B with empty ROIs to capture background", (20, 60),
+            cv2.putText(frame, "Press B with empty ROIs to init adaptive background", (20, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             cv2.putText(frame, "ESC exit | B background | R reset score", (20, H - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
@@ -222,8 +211,8 @@ def tracker():
             if key == 27:
                 break
             elif key in (ord('b'), ord('B')):
-                bg1 = roi1.copy()
-                bg2 = roi2.copy()
+                bg1 = roi1.astype(np.float32)
+                bg2 = roi2.astype(np.float32)
                 round_locked = False
                 h1.clear()
                 h2.clear()
@@ -235,9 +224,18 @@ def tracker():
                 h2.clear()
             continue
 
-        # Build masks via background subtraction
-        m1 = preprocess_diff(roi1, bg1, kernel)
-        m2 = preprocess_diff(roi2, bg2, kernel)
+        # 1) Background adaptativo + 2) Umbral fijo
+        m1, _ = preprocess_diff_adaptive_bg(roi1, bg1, kernel, diff_thresh=diff_thresh)
+        m2, _ = preprocess_diff_adaptive_bg(roi2, bg2, kernel, diff_thresh=diff_thresh)
+
+        # Actualiza fondo SOLO si parece "sin mano" (pocos píxeles blancos)
+        white1 = cv2.countNonZero(m1) / float(ROI_W * ROI_H)
+        white2 = cv2.countNonZero(m2) / float(ROI_W * ROI_H)
+
+        if white1 < update_white_ratio:
+            cv2.accumulateWeighted(roi1, bg1, alpha_bg)
+        if white2 < update_white_ratio:
+            cv2.accumulateWeighted(roi2, bg2, alpha_bg)
 
         # Find hand contours
         c1 = best_contour(m1, min_area=7000)
@@ -246,23 +244,18 @@ def tracker():
         g1 = "NADA"
         g2 = "NADA"
 
-        # Analyze P1
         if c1 is not None:
             area1 = cv2.contourArea(c1)
             d1, hull1 = count_defects_and_hull(c1)
             g1 = classify(d1, area1)
-
-            # Light debug overlays (still single window)
             cv2.drawContours(roi1, [c1], -1, (0, 255, 0), 2)
             if hull1 is not None:
                 cv2.polylines(roi1, [hull1], True, (255, 255, 255), 2)
 
-        # Analyze P2
         if c2 is not None:
             area2 = cv2.contourArea(c2)
             d2, hull2 = count_defects_and_hull(c2)
             g2 = classify(d2, area2)
-
             cv2.drawContours(roi2, [c2], -1, (0, 255, 0), 2)
             if hull2 is not None:
                 cv2.polylines(roi2, [hull2], True, (255, 255, 255), 2)
@@ -273,7 +266,7 @@ def tracker():
         g1s = majority_vote(h1, min_votes=min_votes)
         g2s = majority_vote(h2, min_votes=min_votes)
 
-        # Game logic (lock a round until both return to NADA)
+        # Game logic
         now = time.time()
         if not game_over:
             if (not round_locked) and (g1s in VALID) and (g2s in VALID):
@@ -310,7 +303,7 @@ def tracker():
             win_text = "WINNER: PLAYER 1" if score1 >= 3 else "WINNER: PLAYER 2"
             cv2.putText(frame, win_text, (20, H // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 0, 255), 4)
-            cv2.putText(frame, "Press R to reset | Press B to recapture background",
+            cv2.putText(frame, "Press R to reset | Press B to re-init background",
                         (20, H // 2 + 45), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         cv2.putText(frame, "ESC exit | B background | R reset score", (20, H - 20),
@@ -322,9 +315,9 @@ def tracker():
         if key == 27:
             break
         elif key in (ord('b'), ord('B')):
-            # recapture background
-            bg1 = roi1.copy()
-            bg2 = roi2.copy()
+            # re-init adaptive background
+            bg1 = roi1.astype(np.float32)
+            bg2 = roi2.astype(np.float32)
             round_locked = False
             h1.clear()
             h2.clear()
@@ -337,3 +330,6 @@ def tracker():
 
     cap.release()
     cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    tracker()
